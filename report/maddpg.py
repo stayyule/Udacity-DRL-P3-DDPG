@@ -10,18 +10,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 BUFFER_SIZE = 2 ** 14  # replay buffer size
-
-BATCH_SIZE = 2  # minibatch size
-GAMMA = 0.95  # discount factor
-TAU_ACTOR = 1e-2  # for soft update of target parameters
-TAU_CRITIC = 1e-2  # for soft update of target parameters
-LR_ACTOR = 1e-3  # learning rate of the actor
-LR_CRITIC = 1e-3  # learning rate of the critic
-LEARN_EVERY = 1  # learning timestep interval
-LEARN_NUM = 1  # number of learning passes
-LEARN_AFTER = 4
+BATCH_SIZE = 1000         # minibatch size
+GAMMA = 0.95            # discount factor
+TAU_ACTOR = 1e-2              # for soft update of target parameters
+TAU_CRITIC = 1e-2              # for soft update of target parameters
+LR_ACTOR = 1e-3         # learning rate of the actor
+LR_CRITIC = 1e-3        # learning rate of the critic
+LEARN_EVERY = 20        # learning timestep interval
+LEARN_NUM = 20          # number of learning passes
+LEARN_AFTER = 6000
+SEED = 1
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
+# # TEST
+# BUFFER_SIZE = 32
+# BATCH_SIZE = 8         # minibatch size
+# LEARN_EVERY = 1       # learning timestep interval
+# LEARN_NUM = 1           # number of learning passes
+# LEARN_AFTER = 0
 
 
 def hidden_init(layer):
@@ -66,7 +73,7 @@ class Actor(nn.Module):
 class Critic(nn.Module):
 	"""Critic (Value) Model."""
 	
-	def __init__(self, state_size, action_size, seed, fcsa_units=200, fc_units=300):
+	def __init__(self, state_size, action_size, seed, fcsa_units=300, fc_units=300):
 		"""Initialize parameters and build model.
 		Params
 		======
@@ -81,6 +88,7 @@ class Critic(nn.Module):
 		self.fcs = nn.Linear(state_size, fcsa_units)
 		self.fca = nn.Linear(action_size, fcsa_units)
 		self.bn1 = nn.BatchNorm1d(fcsa_units)
+		self.bn2 = nn.BatchNorm1d(fcsa_units)
 		self.fc2 = nn.Linear(fcsa_units * 2, fc_units)
 		self.fc3 = nn.Linear(fc_units, fc_units)
 		self.fc4 = nn.Linear(fc_units, 1)
@@ -96,7 +104,7 @@ class Critic(nn.Module):
 	def forward(self, states, actions):
 		"""Build a critic (value) network that maps (state, action) pairs -> Q-values."""
 		s = self.bn1(self.fcs(states))
-		a = self.bn1(self.fca(actions))
+		a = self.bn2(self.fca(actions))
 		x = F.relu(self.fc2(torch.cat((s, a), dim=1)))
 		x = F.relu(self.fc3(x))
 		return self.fc4(x)
@@ -125,106 +133,116 @@ class OUNoise:
 		return self.state
 
 
-# SumTree
-# a binary tree data structure where the parent’s value is the sum of its children
 class SumTree:
-	
-	def __init__(self, capacity):
-		"""
-		:param capacity: capacity of saving data which should be equal to 2 ** n
-		"""
-		self.capacity = capacity
-		# node value (priority)
-		self.tree = np.zeros(2 * capacity - 1)
-		# data saved in node
-		self.data = np.zeros(capacity, dtype=object)
-		# index in the tree to overwrite
-		self.write = 0
-		# non-empty data count
-		self.n_entries = 0
-	
-	def _propagate(self, idx, change):
-		"""
-		update current value to the root node
-		:param idx: index is current node(leaf)
-		:param change: changed value
-		:return:
-		"""
-		parent = (idx - 1) // 2
-		
-		self.tree[parent] += change
-		
-		if parent != 0:
-			self._propagate(parent, change)
-	
-	def _retrieve(self, idx, s):
-		"""
-		find sample on leaf node
-		:param idx: idx is current node(parent node if leaf exists)
-		:param s: node value(priority)
-		:return:
-		"""
-		left = 2 * idx + 1
-		right = left + 1
-		
-		if left >= len(self.tree):
-			return idx
-		
-		if s <= self.tree[left]:
-			return self._retrieve(left, s)
-		else:
-			return self._retrieve(right, s - self.tree[left])
-	
-	def total(self):
-		"""
-		sum value of the whole tree
-		:return:
-		"""
-		return self.tree[0]
-	
-	def add(self, p, data):
-		"""
-		store priority and sample
-		:param p: priority(node value)
-		:param data: data to save
-		:return:
-		"""
-		# all value will be saved in bottom layer of the tree
-		idx = self.write + self.capacity - 1
-		
-		self.data[self.write] = data
-		self.update(idx, p)
-		
-		# the data will be overwrite when data number is larger than capacity
-		self.write += 1
-		if self.write >= self.capacity:
-			self.write = 0
-		
-		if self.n_entries < self.capacity:
-			self.n_entries += 1
-	
-	def update(self, idx, p):
-		"""
-		update priority to whole tree
-		:param idx: node to update
-		:param p: priority(node value)
-		:return:
-		"""
-		change = p - self.tree[idx]
-		
-		self.tree[idx] = p
-		self._propagate(idx, change)
-	
-	def get(self, s):
-		"""
-		get priority and sample
-		:param s: target priority equal or less than tree.total
-		:return: index of sample, priority of the sample, data of the sample
-		"""
-		idx = self._retrieve(0, s)
-		dataIdx = idx - self.capacity + 1
-		
-		return idx, self.tree[idx], self.data[dataIdx]
+
+    def __init__(self, capacity):
+        """
+        :param capacity: capacity of saving data which should be equal to 2 ** n
+        """
+        self.capacity = capacity
+        # node value (priority)
+        self.tree = np.zeros(2 * capacity - 1)
+        # data saved in node
+        self.data = np.zeros(capacity, dtype=object)
+        # index in the tree to overwrite
+        self.write = 0
+        # non-empty data count
+        self.n_entries = 0
+
+    def _propagate(self, idx, change):
+        """
+        update current value to the root node
+        :param idx: index is current node(leaf)
+        :param change: changed value
+        :return:
+        """
+        parent = (idx - 1) // 2
+
+        self.tree[parent] += change
+
+        if parent != 0:
+            self._propagate(parent, change)
+
+    def _retrieve(self, idx, s):
+        """
+        find sample on leaf node
+        :param idx: idx is current node(parent node if leaf exists)
+        :param s: node value(priority)
+        :return:
+        """
+        left = 2 * idx + 1
+        right = left + 1
+
+        if left >= len(self.tree):
+            return idx
+
+        if s <= self.tree[left]:
+            return self._retrieve(left, s)
+        else:
+            return self._retrieve(right, s - self.tree[left])
+
+    def total(self):
+        """
+        sum value of the whole tree
+        :return:
+        """
+        return self.tree[0]
+
+    def add(self, p, data):
+        """
+        store priority and sample
+        :param p: priority(node value)
+        :param data: data to save
+        :return:
+        """
+        # all value will be saved in bottom layer of the tree
+        idx = self.write + self.capacity - 1
+        if self.n_entries > 0:
+            p_ave = self.total() / self.n_entries
+        else:
+            p_ave = 0
+        print('p_ave', p_ave)
+        # overwrite the p below average only
+        while p < p_ave:
+            self.write += 1
+            if self.write >= self.capacity:
+                self.write = 0
+
+            idx = self.write + self.capacity - 1
+
+        self.data[self.write] = data
+        self.update(idx, p)
+
+        # the data will be overwrite when data number is larger than capacity
+        self.write += 1
+        if self.write >= self.capacity:
+            self.write = 0
+
+        if self.n_entries < self.capacity:
+            self.n_entries += 1
+
+    def update(self, idx, p):
+        """
+        update priority to whole tree
+        :param idx: node to update
+        :param p: priority(node value)
+        :return:
+        """
+        change = p - self.tree[idx]
+
+        self.tree[idx] = p
+        self._propagate(idx, change)
+
+    def get(self, s):
+        """
+        get priority and sample
+        :param s: target priority equal or less than tree.total
+        :return: index of sample, priority of the sample, data of the sample
+        """
+        idx = self._retrieve(0, s)
+        dataIdx = idx - self.capacity + 1
+
+        return idx, self.tree[idx], self.data[dataIdx]
 
 
 # prioritized experience replay memory
@@ -336,7 +354,7 @@ class Agent:
 		                      range(num_agents)]
 		self.critic_optimizer = [optim.Adam(x.parameters(), lr=LR_CRITIC, weight_decay=0) for x in self.critic_local]
 		
-		# Noise process
+		# Noise process for 400 * 300 actor network
 		self.noise_h = OUNoise(1, random_seed, mu=-0.25, theta=0.2, sigma=0.1)
 		self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.15, sigma=0.15)
 		
@@ -380,21 +398,21 @@ class Agent:
 		for i in range(self.num_agents):
 			# Get predicted next-state actions and Q values from target models
 			self.actor_target[i].eval()
-			actions_next = self.actor_target[i](torch.FloatTensor([next_states[i]]).to(device))
+			actions_next = self.actor_target[i](torch.FloatTensor([next_state[i]]).to(device))
 			self.actor_target[i].train()
 			
 			actions_next_all = torch.tensor(())
 			for j in range(self.num_agents):
 				if i < j:
-					actions_next_all = torch.cat((actions_next, torch.FloatTensor([actions[j]]).to(device)), dim=1)
+					actions_next_all = torch.cat((actions_next, torch.FloatTensor([action[j]]).to(device)), dim=1)
 				if j < i:
-					actions_next_all = torch.cat((torch.FloatTensor([actions[j]]).to(device), actions_next), dim=1)
+					actions_next_all = torch.cat((torch.FloatTensor([action[j]]).to(device), actions_next), dim=1)
 			
 			self.critic_target[i].eval()
 			Q_targets_next = self.critic_target[i](next_states_all, actions_next_all)
 			self.critic_target[i].train()
 			
-			Q_targets = rewards[i] + (gamma * Q_targets_next * (1 - dones[i]))
+			Q_targets = reward[i] + (gamma * Q_targets_next * (1 - done[i]))
 			
 			# Compute critic loss
 			self.critic_local[i].eval()
@@ -416,8 +434,7 @@ class Agent:
 		#         print('dones', done)
 		# calculate td-error
 		td_error = self.calc_td(state, action, reward, next_state, done, GAMMA)
-		#         print('td_error', td_error)
-		
+		# self.deprint('reward', reward, 'td_error', td_error)
 		self.memory.add(state, action, reward, next_state, done, td_error)
 		self.eps = max(self.eps_end, self.eps - self.eps_decay)  # decrease epsilon
 		
@@ -447,11 +464,11 @@ class Agent:
 				action = self.actor_local[i](state[i].view(-1, self.state_size)).cpu().data.numpy()
 			self.actor_local[i].train()
 			if add_noise:
-				self.deprint('action', action)
+				# self.deprint('action', action)
 				noise = np.array([self.noise_h.sample(), self.noise_v.sample()]).reshape(-1, self.action_size)
-				self.deprint('noise', noise)
+				# self.deprint('noise', noise)
 				action += self.eps * noise
-				self.deprint('action_with_noise', action)
+				# self.deprint('action_with_noise', action)
 			
 			actions.append(action)
 		actions = np.vstack(actions)
@@ -563,8 +580,6 @@ class Agent:
 			
 			c_loss[i] = critic_loss.cpu().data.numpy()
 			a_loss[i] = actor_loss.cpu().data.numpy()
-		# print(' c_loss[{}]'.format(i), c_loss[i])
-		# print(' a_loss[{}]'.format(i), a_loss[i])
 		
 		td_error_all = np.sum(td_error_all.cpu().data.numpy(), axis=1)
 		#         print('rewards', rewards, 'td_error_all', td_error_all, 'is_weights', is_weights)
