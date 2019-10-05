@@ -441,19 +441,19 @@ class Agent:
         self.eps = max(self.eps_end, self.eps - self.eps_decay)  # decrease epsilon
 
         # Learn at defined interval, if enough samples are available in memory
+        c_loss = []
+        a_loss = []
         if len(self.memory) > BATCH_SIZE and timestep % LEARN_EVERY == 0 and timestep > LEARN_AFTER:
-            c_loss = []
-            a_loss = []
-            # experiences = self.memory.sample(BATCH_SIZE)
+
+            experiences = self.memory.sample(BATCH_SIZE)
             for _ in range(LEARN_NUM):
-                experiences = self.memory.sample(BATCH_SIZE)
+                # experiences = self.memory.sample(BATCH_SIZE)
                 c, a = self.learn(experiences, GAMMA)
                 c_loss.append(c)
                 a_loss.append(a)
             # print(c_loss, a_loss)
-            return c_loss, a_loss
-        else:
-            return None, None
+        return c_loss, a_loss
+
 
     def act(self, state, add_noise=True):
         """Returns actions for given state as per current policy."""
@@ -492,17 +492,12 @@ class Agent:
         # ---------------------------- update critic ---------------------------- #
         # Get predicted next-state actions and Q values from target models
         actions_next = self.actor_target(next_states)
-        # print('actions_next', actions_next)
-        # print('ma_actions', ma_actions)
-        # print('actions', actions)
         ma_actions_np = np.array(ma_actions)
         # print('ma_actions_np', ma_actions_np)
         ma_actions_np[:, self.agent_index] = actions_next.cpu().data.numpy()
         ma_actions_next = torch.from_numpy(ma_actions_np.reshape(BATCH_SIZE, -1)).float().to(device)
-        # print('ma_actions_next', ma_actions_next)
         ma_actions = torch.from_numpy(np.array(ma_actions).reshape(BATCH_SIZE, -1)).float().to(device)
         # print('ma_actions', ma_actions)
-        # print('ma_next_states', ma_next_states)
         # ma_actions
         Q_targets_next = self.critic_target(ma_next_states, ma_actions_next)
         # Compute Q targets for current states (y_i)
@@ -516,24 +511,37 @@ class Agent:
         # torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
 
+        # print('rewards', rewards)
+        # if np.any(rewards.cpu().data.numpy() > 0):
+        #     print('rewards', rewards)
+        #     print('actions_next', actions_next)
+        #     print('ma_actions', ma_actions)
+        #     print('actions', actions)
+        #     print('ma_actions_next', ma_actions_next)
+        #     print('ma_next_states', ma_next_states)
+        #     print('Q_targets_next', Q_targets_next)
+        #     print('Q_targets', Q_targets)
+        #     print('Q_expected', Q_expected)
+
         # ---------------------------- update actor ---------------------------- #
         # Compute actor loss
-        actions_pred = self.actor_local(states)
-        ma_actions_np[:, self.agent_index] = actions_pred.cpu().data.numpy()
-        # print('ma_actions_np', ma_actions_np)
-        ma_actions_pred = torch.from_numpy(ma_actions_np.reshape(BATCH_SIZE, -1)).float().to(device)
+        ma_actions_pred = torch.from_numpy(ma_actions_np).float().to(device)
         # print('ma_actions_pred', ma_actions_pred)
-        actor_loss = -self.critic_local(ma_states, ma_actions_pred).mean()
+
+        actions_pred = self.actor_local(states)
+        for i in range(self.num_agents):
+            if i < self.agent_index:
+                actions_pred = torch.cat((ma_actions_pred[:, i] , actions_pred), dim=1)
+            if i > self.agent_index:
+                actions_pred = torch.cat((actions_pred, ma_actions_pred[:, i]), dim=1)
+
+        # print('actions_pred', actions_pred)
+
+        actor_loss = -self.critic_local(ma_states, actions_pred).mean()
         # Minimize the loss
         self.actor_optimizer.zero_grad()
         actor_loss.backward()
         self.actor_optimizer.step()
-
-        td_error = torch.abs(Q_expected - Q_targets).cpu().data.numpy()
-        #         print('rewards', rewards, 'td_error_all', td_error_all, 'is_weights', is_weights)
-
-        for idx, error in zip(idxs, td_error):
-            self.memory.update(idx, error)
 
         # ----------------------- update target networks ----------------------- #
         self.soft_update(self.critic_local, self.critic_target, TAU_CRITIC)
@@ -541,6 +549,12 @@ class Agent:
 
         c_loss = critic_loss.cpu().data.numpy()
         a_loss = actor_loss.cpu().data.numpy()
+
+        td_error = torch.abs(Q_expected - Q_targets).cpu().data.numpy()
+        # print('rewards', rewards, 'td_error', td_error)
+
+        for idx, error in zip(idxs, td_error):
+            self.memory.update(idx, error)
 
         return c_loss, a_loss
 
