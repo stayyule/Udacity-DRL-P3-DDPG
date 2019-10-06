@@ -5,3 +5,4 @@ report/*.log
 .idea/
 Tennis_Windows_x86_64/
 .ipynb_checkpoints/
+report/experiment_*/*.pth

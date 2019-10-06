@@ -374,7 +374,7 @@ class Agent:
         self.noise_h = OUNoise(1, random_seed, mu=-0, theta=0.2, sigma=0.15)
         self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.2, sigma=0.15)
 
-        self.eps = 5.0
+        self.eps = 2.0
         self.eps_end = 0.01
         self.eps_decay = 1e-5
 
