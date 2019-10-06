@@ -10,15 +10,15 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 BUFFER_SIZE = 2**17  # replay buffer size
-BATCH_SIZE = 500         # minibatch size
-GAMMA = 0.99            # discount factor
-TAU_ACTOR = 1e-3              # for soft update of target parameters
-TAU_CRITIC = 1e-3              # for soft update of target parameters
+BATCH_SIZE = 1000         # minibatch size
+GAMMA = 0.95            # discount factor
+TAU_ACTOR = 1e-2              # for soft update of target parameters
+TAU_CRITIC = 1e-2              # for soft update of target parameters
 LR_ACTOR = 1e-3         # learning rate of the actor
 LR_CRITIC = 1e-3        # learning rate of the critic
-LEARN_EVERY = 1        # learning timestep interval
-LEARN_NUM = 5           # number of learning passes
-LEARN_AFTER = 0
+LEARN_EVERY = 10        # learning timestep interval
+LEARN_NUM = 10           # number of learning passes
+LEARN_AFTER = 3000
 SEED = 1
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -375,9 +375,9 @@ class Agent:
         self.noise_h = OUNoise(1, random_seed, mu=-0, theta=0.2, sigma=0.15)
         self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.2, sigma=0.15)
 
-        self.eps = 5.0
+        self.eps = 1.0
         self.eps_end = 0.01
-        self.eps_decay = 5e-4
+        self.eps_decay = 2e-5
 
         # Replay memory
         self.memory = PERMemory(BUFFER_SIZE, random_seed)
@@ -449,7 +449,6 @@ class Agent:
                 a_loss.append(a)
             # print(c_loss, a_loss)
         return c_loss, a_loss
-
 
     def act(self, state, add_noise=True):
         """Returns actions for given state as per current policy."""
