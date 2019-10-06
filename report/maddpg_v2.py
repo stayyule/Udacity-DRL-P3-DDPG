@@ -9,16 +9,16 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-BUFFER_SIZE = 2**9  # replay buffer size
-BATCH_SIZE = 50         # minibatch size
-GAMMA = 0.95            # discount factor
-TAU_ACTOR = 1e-2              # for soft update of target parameters
-TAU_CRITIC = 1e-2              # for soft update of target parameters
+BUFFER_SIZE = 2**17  # replay buffer size
+BATCH_SIZE = 500         # minibatch size
+GAMMA = 0.99            # discount factor
+TAU_ACTOR = 1e-3              # for soft update of target parameters
+TAU_CRITIC = 1e-3              # for soft update of target parameters
 LR_ACTOR = 1e-3         # learning rate of the actor
 LR_CRITIC = 1e-3        # learning rate of the critic
-LEARN_EVERY = 100        # learning timestep interval
-LEARN_NUM = 10           # number of learning passes
-LEARN_AFTER = 3000
+LEARN_EVERY = 1        # learning timestep interval
+LEARN_NUM = 5           # number of learning passes
+LEARN_AFTER = 0
 SEED = 1
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -120,6 +120,7 @@ class OUNoise:
         self.theta = theta
         self.sigma = sigma
         self.seed = random.seed(seed)
+        self.size = size
         self.reset()
 
     def reset(self):
@@ -129,7 +130,7 @@ class OUNoise:
     def sample(self):
         """Update internal state and return it as a noise sample."""
         x = self.state
-        dx = self.theta * (self.mu - x) + self.sigma * np.array([random.random() for _ in range(len(x))])
+        dx = self.theta * (self.mu - x) + self.sigma * np.random.standard_normal(self.size)
         self.state = x + dx
         return self.state
 
@@ -374,9 +375,9 @@ class Agent:
         self.noise_h = OUNoise(1, random_seed, mu=-0, theta=0.2, sigma=0.15)
         self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.2, sigma=0.15)
 
-        self.eps = 2.0
+        self.eps = 5.0
         self.eps_end = 0.01
-        self.eps_decay = 1e-5
+        self.eps_decay = 5e-4
 
         # Replay memory
         self.memory = PERMemory(BUFFER_SIZE, random_seed)
@@ -440,9 +441,9 @@ class Agent:
         a_loss = []
         if len(self.memory) > BATCH_SIZE and timestep % LEARN_EVERY == 0 and timestep > LEARN_AFTER:
 
-            experiences = self.memory.sample(BATCH_SIZE)
+            # experiences = self.memory.sample(BATCH_SIZE)
             for _ in range(LEARN_NUM):
-                # experiences = self.memory.sample(BATCH_SIZE)
+                experiences = self.memory.sample(BATCH_SIZE)
                 c, a = self.learn(experiences, GAMMA)
                 c_loss.append(c)
                 a_loss.append(a)
