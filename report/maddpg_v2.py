@@ -372,8 +372,8 @@ class Agent:
         # Noise process for 400 * 300 actor network
         # self.noise_h = OUNoise(1, random_seed, mu=-0.3, theta=0.2, sigma=0.1)
         # self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.15, sigma=0.15)
-        self.noise_h = OUNoise(1, random_seed, mu=-0, theta=0.2, sigma=0.15)
-        self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.2, sigma=0.15)
+        self.noise_h = OUNoise(1, random_seed, mu=-0, theta=0.05, sigma=0.2)
+        self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.05, sigma=0.2)
 
         self.eps = 1.0
         self.eps_end = 0.01
