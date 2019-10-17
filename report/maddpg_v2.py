@@ -9,27 +9,33 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-BUFFER_SIZE = 2**17  # replay buffer size
-BATCH_SIZE = 1000         # minibatch size
-GAMMA = 0.95            # discount factor
-TAU_ACTOR = 1e-2              # for soft update of target parameters
-TAU_CRITIC = 1e-2              # for soft update of target parameters
+
+import matplotlib.pyplot as plt
+
+import time
+
+
+BUFFER_SIZE = int(1e5)  # replay buffer size
+BATCH_SIZE = 128         # minibatch size
+GAMMA = 0.99            # discount factor
+TAU_ACTOR = 8e-3              # for soft update of target parameters
+TAU_CRITIC = 8e-3              # for soft update of target parameters
 LR_ACTOR = 1e-3         # learning rate of the actor
 LR_CRITIC = 1e-3        # learning rate of the critic
-LEARN_EVERY = 10        # learning timestep interval
-LEARN_NUM = 10           # number of learning passes
-LEARN_AFTER = 3000
-SEED = 1
+LEARN_EVERY = 1        # learning timestep interval
+LEARN_NUM = 5           # number of learning passes
+LEARN_AFTER = 1500
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-
-# # TEST
-# BUFFER_SIZE = 32
-# BATCH_SIZE = 8         # minibatch size
-# LEARN_EVERY = 1       # learning timestep interval
-# LEARN_NUM = 1           # number of learning passes
-# LEARN_AFTER = 0
+test = False
+if test:
+    # TEST
+    BUFFER_SIZE = 32
+    BATCH_SIZE = 8         # minibatch size
+    LEARN_EVERY = 1       # learning timestep interval
+    LEARN_NUM = 1           # number of learning passes
+    LEARN_AFTER = 0
 
 
 def hidden_init(layer):
@@ -74,7 +80,7 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     """Critic (Value) Model."""
 
-    def __init__(self, state_size, action_size, seed, fcsa_units=300, fc_units=300):
+    def __init__(self, state_size, action_size, seed, fcsa_units=400, fc_units=300):
         """Initialize parameters and build model.
         Params
         ======
@@ -87,17 +93,15 @@ class Critic(nn.Module):
         super(Critic, self).__init__()
         self.seed = torch.manual_seed(seed)
         self.fcs = nn.Linear(state_size, fcsa_units)
-        self.fca = nn.Linear(action_size, fcsa_units)
         self.bn1 = nn.BatchNorm1d(fcsa_units)
-        self.bn2 = nn.BatchNorm1d(fcsa_units)
-        self.fc2 = nn.Linear(fcsa_units * 2, fc_units)
+
+        self.fc2 = nn.Linear(fcsa_units + action_size, fc_units)
         self.fc3 = nn.Linear(fc_units, fc_units)
         self.fc4 = nn.Linear(fc_units, 1)
         self.reset_parameters()
 
     def reset_parameters(self):
         self.fcs.weight.data.uniform_(*hidden_init(self.fcs))
-        self.fca.weight.data.uniform_(*hidden_init(self.fca))
         self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
         self.fc3.weight.data.uniform_(*hidden_init(self.fc3))
         self.fc4.weight.data.uniform_(-3e-3, 3e-3)
@@ -105,8 +109,7 @@ class Critic(nn.Module):
     def forward(self, states, actions):
         """Build a critic (value) network that maps (state, action) pairs -> Q-values."""
         s = self.bn1(self.fcs(states))
-        a = self.bn2(self.fca(actions))
-        x = F.relu(self.fc2(torch.cat((s, a), dim=1)))
+        x = F.relu(self.fc2(torch.cat((s, actions), dim=1)))
         x = F.relu(self.fc3(x))
         return self.fc4(x)
 
@@ -213,9 +216,6 @@ class SumTree:
 
             idx = self.write + self.capacity - 1
 
-        if data == 0:
-            print(idx, data, write)
-
         self.data[self.write] = data
         self.update(idx, p)
 
@@ -268,16 +268,13 @@ class PERMemory:
         self.capacity = capacity
         self.seed = random.seed(random_seed)
         # state, ma_states, action, ma_actions, reward, next_state, ma_next_states, done
-        self.experience = namedtuple("Experience", field_names=["state", "ma_state",
-                                                                "action", "ma_action",
-                                                                "reward", "next_state",
-                                                                "ma_next_state", "done"])
+        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
 
     def _get_priority(self, error):
         return (np.abs(error) + self.e) ** self.a
 
-    def add(self, state, ma_states, action, ma_actions, reward, next_state, ma_next_states, done, error):
-        e = self.experience(state, ma_states, action, ma_actions, reward, next_state, ma_next_states, done)
+    def add(self, state, action, reward, next_state, done, error):
+        e = self.experience(state, action, reward, next_state, done)
         # p = self._get_priority(error)
         self.tree.add(error, e)
 
@@ -315,16 +312,17 @@ class PERMemory:
         #     is_weights /= is_weights.max()
         is_weights = []
 
-        states = torch.from_numpy(np.vstack([e.state for e in batch if e is not None ])).float().to(device)
-        actions = torch.from_numpy(np.vstack([e.action for e in batch if e is not None ])).float().to(device)
+        # states = torch.from_numpy(np.vstack([e.state for e in batch if e is not None ])).float().to(device)
+        states = torch.from_numpy(np.vstack([e.state.reshape(-1) for e in batch if e is not None])).float().to(device)
+        # actions = torch.from_numpy(np.vstack([e.action for e in batch if e is not None ])).float().to(device)
+        actions = [e.action for e in batch if e is not None]
         rewards = torch.from_numpy(np.vstack([e.reward for e in batch if e is not None ])).float().to(device)
-        next_states = torch.from_numpy(np.vstack([e.next_state for e in batch if e is not None ])).float().to(device)
+        # next_states = torch.from_numpy(np.vstack([e.next_state for e in batch if e is not None ])).float().to(device)
+        next_states = torch.from_numpy(np.vstack([e.next_state.reshape(-1) for e in batch if e is not None ])).float().to(device)
         dones = torch.from_numpy(np.vstack([e.done for e in batch if e is not None ]).astype(np.uint8)).float().to(device)
-        ma_states = torch.from_numpy(np.vstack([e.ma_state.reshape(-1) for e in batch if e is not None ])).float().to(device)
-        ma_next_states = torch.from_numpy(np.vstack([e.ma_next_state.reshape(-1) for e in batch if e is not None ])).float().to(device)
-        ma_actions = [e.ma_action for e in batch if e is not None ]
 
-        return states, ma_states, actions, ma_actions, rewards, next_states, ma_next_states, dones, idxs, is_weights
+
+        return states, actions, rewards, next_states, dones, idxs, is_weights
 
     def update(self, idx, error):
         """
@@ -360,8 +358,8 @@ class Agent:
 
         # Actor Network (w/ Target Network)
         # turn model to list, one for each agent
-        self.actor_local = Actor(state_size, action_size, random_seed).to(device)
-        self.actor_target = Actor(state_size, action_size, random_seed).to(device)
+        self.actor_local = Actor(state_size * num_agents, action_size, random_seed).to(device)
+        self.actor_target = Actor(state_size * num_agents, action_size, random_seed).to(device)
         self.actor_optimizer = optim.Adam(self.actor_local.parameters(), lr=LR_ACTOR)
 
         # Critic Network (w/ Target Network)
@@ -369,31 +367,24 @@ class Agent:
         self.critic_target = Critic(state_size * num_agents, action_size * num_agents, random_seed).to(device)
         self.critic_optimizer = optim.Adam(self.critic_local.parameters(), lr=LR_CRITIC, weight_decay=0)
 
-        # Noise process for 400 * 300 actor network
-        # self.noise_h = OUNoise(1, random_seed, mu=-0.3, theta=0.2, sigma=0.1)
-        # self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.15, sigma=0.15)
-        self.noise_h = OUNoise(1, random_seed, mu=-0, theta=0.05, sigma=0.2)
-        self.noise_v = OUNoise(1, random_seed, mu=-0., theta=0.05, sigma=0.2)
+        # Noise process
+        self.noise = OUNoise(action_size, random_seed)
 
-        self.eps = 1.0
-        self.eps_end = 0.01
-        self.eps_decay = 2e-5
+        self.eps = 2.0
+        self.eps_end = 0.0
+        self.eps_decay = 6e-4
 
         # Replay memory
         self.memory = PERMemory(BUFFER_SIZE, random_seed)
 
-        # Debug
-        self.debug = False
-
-    def calc_td(self, state, ma_states, action, ma_actions, reward, next_state, ma_next_states, done, gamma):
+    def calc_td(self, ma_states, ma_actions, reward, ma_next_states, done, gamma):
         ma_states = torch.from_numpy(np.vstack(ma_states.reshape(-1)).T).float().to(device)
-        next_state = torch.from_numpy(np.vstack(next_state.reshape(-1)).T).float().to(device)
         ma_next_states = torch.from_numpy(np.vstack(ma_next_states.reshape(-1)).T).float().to(device)
 
         # Get predicted next-state actions and Q values from target models
         self.actor_target.eval()
         with torch.no_grad():
-            actions_next = self.actor_target(next_state).cpu().numpy()
+            actions_next = self.actor_target(ma_next_states).cpu().numpy()
         self.actor_target.train()
         # print('action', action)
         # print('ma_actions', ma_actions)
@@ -413,7 +404,7 @@ class Agent:
             q_targets_next = self.critic_target(ma_next_states, actions_next_all)
         self.critic_target.train()
 
-        q_targets = (0.02 + reward) * 8 + (gamma * q_targets_next * (1 - done))
+        q_targets = (0.02 + reward) + (gamma * q_targets_next * (1 - done))
 
         self.critic_local.eval()
         with torch.no_grad():
@@ -421,20 +412,15 @@ class Agent:
         self.critic_local.train()
         td_error = torch.abs(q_expected - q_targets)
 
-        # if td_error < 0:
-        #     td_error *= -0.05
-        # print('td_error', td_error)
-
         return td_error.cpu().data.numpy()[0]
 
-    def step(self, state, ma_states, action, ma_actions, reward, next_state, ma_next_states, done, timestep):
+    def step(self, states, actions, reward, next_states, done, timestep):
         """Save experience in replay memory, and use random sample from buffer to learn."""
 
         # calculate td-error
-        td_error = self.calc_td(state, ma_states, action, ma_actions, reward, next_state, ma_next_states, done, GAMMA)
+        td_error = self.calc_td(states, actions, reward, next_states, done, GAMMA)
         # print('reward', reward, 'td_error', td_error)
-        self.memory.add(state, ma_states, action, ma_actions, reward, next_state, ma_next_states, done, td_error)
-        self.eps = max(self.eps_end, self.eps - self.eps_decay)  # decrease epsilon
+        self.memory.add(states, actions, reward, next_states, done, td_error)
 
         # Learn at defined interval, if enough samples are available in memory
         c_loss = []
@@ -447,26 +433,25 @@ class Agent:
                 c, a = self.learn(experiences, GAMMA)
                 c_loss.append(c)
                 a_loss.append(a)
-            # print(c_loss, a_loss)
+
         return c_loss, a_loss
 
     def act(self, state, add_noise=True):
         """Returns actions for given state as per current policy."""
-        state = torch.from_numpy(state).float().to(device)
+        state = torch.from_numpy(np.array([state.reshape(-1)])).float().to(device)
 
         self.actor_local.eval()
         with torch.no_grad():
-            action = self.actor_local(state.view(-1, self.state_size)).cpu().data.numpy()
+            action = self.actor_local(state).cpu().data.numpy()
         self.actor_local.train()
         if add_noise:
-            noise = np.array([self.noise_h.sample(), self.noise_v.sample()]).reshape(-1, self.action_size)
-            action += self.eps * noise
-
+            # print('action {}'.format(self.agent_index), action)
+            action += self.eps * self.noise.sample()
+            # print('action {}'.format(self.agent_index), action)
         return np.clip(action, -1, 1)
 
     def reset(self):
-        self.noise_h.reset()
-        self.noise_v.reset()
+        self.noise.reset()
 
     def learn(self, experiences, gamma):
         """Update policy and value parameters using given batch of experience tuples.
@@ -480,15 +465,16 @@ class Agent:
             experiences (Tuple[torch.Tensor]): tuple of (s, a, r, s', done) tuples
             gamma (float): discount factor
         """
-        states, ma_states, actions, ma_actions, \
-        rewards, next_states, ma_next_states, \
+        ma_states, ma_actions, \
+        rewards, ma_next_states, \
         dones, idxs, is_weights = experiences
 
-        # print('rewards', rewards)
+        # print('agent {}'.format(self.agent_index + 1), '\n', rewards)
+        # print('agent {}'.format(self.agent_index + 1), '\n', idxs)
 
         # ---------------------------- update critic ---------------------------- #
         # Get predicted next-state actions and Q values from target models
-        actions_next = self.actor_target(next_states)
+        actions_next = self.actor_target(ma_next_states)
         ma_actions_np = np.array(ma_actions)
         # print('ma_actions_np', ma_actions_np)
         ma_actions_np[:, self.agent_index] = actions_next.cpu().data.numpy()
@@ -498,14 +484,14 @@ class Agent:
         # ma_actions
         Q_targets_next = self.critic_target(ma_next_states, ma_actions_next)
         # Compute Q targets for current states (y_i)
-        Q_targets = (0.02 + rewards) * 8 + (gamma * Q_targets_next * (1 - dones))
+        Q_targets = rewards + (gamma * Q_targets_next * (1 - dones))
         # Compute critic loss
         Q_expected = self.critic_local(ma_states, ma_actions)
         critic_loss = F.mse_loss(Q_expected, Q_targets)
         # Minimize the loss
         self.critic_optimizer.zero_grad()
         critic_loss.backward()
-        # torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
+        torch.nn.utils.clip_grad_norm_(self.critic_local.parameters(), 1)
         self.critic_optimizer.step()
 
         # print('rewards', rewards)
@@ -525,7 +511,7 @@ class Agent:
         ma_actions_pred = torch.from_numpy(ma_actions_np).float().to(device)
         # print('ma_actions_pred', ma_actions_pred)
 
-        actions_pred = self.actor_local(states)
+        actions_pred = self.actor_local(ma_states)
         for i in range(self.num_agents):
             if i < self.agent_index:
                 actions_pred = torch.cat((ma_actions_pred[:, i] , actions_pred), dim=1)
@@ -552,6 +538,9 @@ class Agent:
 
         for idx, error in zip(idxs, td_error):
             self.memory.update(idx, error)
+
+        self.eps = max(self.eps_end, self.eps - self.eps_decay)  # decrease epsilon
+        self.reset()
 
         return c_loss, a_loss
 
