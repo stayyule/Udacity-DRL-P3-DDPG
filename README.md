@@ -69,9 +69,12 @@ conda env create -f environment.yaml
 activate ml-agents
 ```
 - There're several instructions notebook under `/report`. 
-- Open `Tennis-MADDPG.ipynb` to review the training process.
-- Open `Tennis_Report.ipynb` to read details for design and implementations.
-- Open `Smart_Agent.ipynb` to check how the trained agent works.
+- Open `Report.ipynb` or `Report.html` to read details for design and implementations of this project.
+- Open `Tennis-MADDPG.ipynb` to review the maddpg agents training process.
+- Open `Tennis-MADDPG-PER.ipynb` to review the maddpg agents with PER(prioritized experience replay) training process.
+- Open `maddpg.py` to review codes of maddpg implementation.
+- Open `maddpg_v3.py` to review codes of maddpg with PER implementation.
+- Open `Unity Environment 10_18_2019 1_44_00 AM.mp4` to watch smart agents play.
 To open these instructions, get to repository folder and type in anaconda prompt:
 ```
 jupyter notebook
@@ -80,21 +83,26 @@ jupyter notebook
 
 ### Solution Pseudo code
 
-![DDPG](./report/psuedo.png)
+![MADDPG](./report/pic/psuedo.png)
 
 ### Hyperparameters:
+
 ```python
 BUFFER_SIZE = int(1e6)  # replay buffer size
-BATCH_SIZE = 128        # minibatch size
-GAMMA = 0.99            # discount factor
-TAU = 1e-3              # for soft update of target parameters
-LR_ACTOR = 1e-4         # learning rate of the actor
+BATCH_SIZE = 512        # minibatch size
+LR_ACTOR = 1e-3         # learning rate of the actor
 LR_CRITIC = 1e-3        # learning rate of the critic
 WEIGHT_DECAY = 0        # L2 weight decay
-LEARN_EVERY = 20        # learning timestep interval
-LEARN_NUM = 10          # number of learning passes
-EPSILON = 1.0           # explore->exploit noise process added to act step
-EPSILON_DECAY = 1e-6    # decay rate for noise process
+LEARN_EVERY = 1         # learning timestep interval
+LEARN_NUM = 5           # number of learning passes
+GAMMA = 0.99            # discount factor
+TAU = 8e-3              # for soft update of target parameters
+OU_SIGMA = 0.2          # Ornstein-Uhlenbeck noise parameter, volatility
+OU_THETA = 0.15         # Ornstein-Uhlenbeck noise parameter, speed of mean reversion
+EPS_START = 5.0         # initial value for epsilon in noise decay process in Agent.act()
+EPS_DECAY = 6e-4        # episode to end the noise decay process
+EPS_FINAL = 0           # final value for epsilon after decay
 ```
 
 ### Result
+![RESULT](./report/pic/100mean_maddpg.png)
